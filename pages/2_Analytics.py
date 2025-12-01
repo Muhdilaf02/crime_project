@@ -13,10 +13,11 @@ from pathlib import Path
 import json, joblib, warnings, zipfile
 warnings.filterwarnings("ignore")
 
-# UI helpers from your project
-from utils.common import theme_css, get_paths
+# UI helpers
+from utils.common import theme_css
 from utils.navbar import cyber_navbar
 from utils.glow_panels import add_glow_effect
+
 
 # ---------------- Page config & header ----------------
 st.set_page_config(page_title="Unified Intelligence Studio — Crime Analytics",
@@ -41,7 +42,6 @@ socioeconomic relationships and multivariate correlations — supporting the FYP
 # ---------------- Load dataset from ZIP (FINAL FIXED VERSION) ---------
 # ======================================================================
 
-# 🚀 Bypass get_paths() (sebab ia bagi path salah di Streamlit)
 ZIP_PATH = Path("output/final_cleaned_crime_socioeconomic_data.zip")
 CSV_NAME = "final_cleaned_crime_socioeconomic_data.csv"
 
@@ -52,15 +52,15 @@ if not ZIP_PATH.exists():
 try:
     with zipfile.ZipFile(ZIP_PATH) as z:
         if CSV_NAME not in z.namelist():
-            st.error(f"CSV file '{CSV_NAME}' not found inside ZIP. ZIP contains: {z.namelist()}")
+            st.error(f"CSV '{CSV_NAME}' not found in ZIP. ZIP contains: {z.namelist()}")
             st.stop()
         with z.open(CSV_NAME) as f:
             df = pd.read_csv(f, low_memory=False)
 except Exception as e:
-    st.error(f"Failed to read ZIP: {e}")
+    st.error(f"Failed to load ZIP: {e}")
     st.stop()
 
-# NORMALIZE COLUMNS
+# Normalize columns
 df.columns = (
     df.columns.str.strip()
               .str.lower()
@@ -68,11 +68,12 @@ df.columns = (
               .str.replace(r"[^\w\d_]", "", regex=True)
 )
 
+
 # ======================================================================
-# ---------------- Continue original code below -------------------------
+# ---------------- Continue original code ------------------------------
 # ======================================================================
 
-# parse date columns and build _year like notebook
+# Parse date columns
 for dcol in ("date_of_occurrence", "date_reported", "date_case_closed"):
     if dcol in df.columns:
         df[dcol] = pd.to_datetime(df[dcol], errors="coerce")
@@ -86,18 +87,18 @@ elif "date_reported" in df.columns:
     df["_year"] = df["date_reported"].dt.year
 df["_year"] = pd.to_numeric(df["_year"], errors="coerce").astype("Int64")
 
-# region col detection
+# Region detection
 region_candidates = ["victim_district", "district", "state_name", "state"]
 region_col = next((c for c in region_candidates if c in df.columns), None)
 if region_col is None:
-    st.error("No region column detected (looked for victim_district, district, state_name, state).")
+    st.error("No region column detected.")
     st.stop()
 
-# crime domain detection (multiple fallbacks)
+# Crime domain
 domain_candidates = ["crime_domain", "crime_type", "crime_category", "crime_description", "category"]
 domain_col = next((c for c in domain_candidates if c in df.columns), None)
 
-# total crimes logic
+# Crime count
 if "crime_count" in df.columns:
     df["_total_crimes"] = df["crime_count"].fillna(0).astype(float)
 else:
@@ -106,12 +107,9 @@ else:
         if any(k in c for k in ("report_number","report_id","case","incident","count"))
         and pd.api.types.is_numeric_dtype(df[c])
     ]
-    if count_candidates:
-        df["_total_crimes"] = df[count_candidates[0]].fillna(0).astype(float)
-    else:
-        df["_total_crimes"] = 1.0  # fallback
+    df["_total_crimes"] = df[count_candidates[0]].fillna(0).astype(float) if count_candidates else 1.0
 
-# try load model for feature importance
+# Load ML model (if exists)
 MODEL = None
 MODEL_PATHS = [
     Path("output/extratrees_ultrafast_v4.pkl"),
@@ -130,23 +128,20 @@ for p in MODEL_PATHS:
             else:
                 MODEL = joblib.load(p)
             break
-        except Exception:
+        except:
             MODEL = None
 
-# features list
+# Feature list
 FEATURES = []
 feat_path = Path("output/features_ultrafast_v4.json")
 if not feat_path.exists():
     alt = Path("output/feature_config.json")
-    if alt.exists():
-        feat_path = alt
+    if alt.exists(): feat_path = alt
 if feat_path.exists():
-    try:
-        FEATURES = json.load(open(feat_path, "r")).get("features", [])
-    except Exception:
-        FEATURES = []
+    try: FEATURES = json.load(open(feat_path, "r")).get("features", [])
+    except: FEATURES = []
 
-# create visuals directory
+# Visuals directory
 VIS_DIR = Path("output/visuals")
 VIS_DIR.mkdir(exist_ok=True)
 
@@ -167,9 +162,8 @@ with tabs[0]:
     st.header("Crime Domain Analysis")
     col1, col2 = st.columns(2)
 
-    # left
     with col1:
-        st.subheader("Top Crime Categories (Bar)")
+        st.subheader("Top Crime Categories")
         if domain_col:
             counts = df[domain_col].fillna("Unknown").value_counts().reset_index()
             counts.columns = [domain_col, "count"]
@@ -178,21 +172,16 @@ with tabs[0]:
                          color="count", color_continuous_scale="Reds", height=PLOTLY_HEIGHT)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.warning("No crime-domain column found.")
+            st.warning("Domain column missing.")
 
-        st.markdown("""
-        **Explanation:** Highest-frequency crime classes help identify priority intervention areas.
-        """)
-
-    # right
     with col2:
         st.subheader("Composition (Pie)")
         if domain_col:
-            topn = counts.head(8)
-            fig2 = px.pie(topn, names=domain_col, values="count", height=PLOTLY_HEIGHT)
-            st.plotly_chart(fig2, use_container_width=True)
+            fig = px.pie(counts.head(8), names=domain_col, values="count", height=PLOTLY_HEIGHT)
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Pie chart unavailable.")
+
 
 # ---------------- TAB 2 ----------------
 with tabs[1]:
@@ -204,7 +193,6 @@ with tabs[1]:
         if "victim_age" in df.columns:
             fig, ax = plt.subplots(figsize=MATPLOT_FIGSIZE)
             sns.histplot(df["victim_age"].dropna(), bins=30, kde=True, color="orange", ax=ax)
-            ax.set_title("Victim Age Distribution")
             st.pyplot(fig)
         else:
             st.warning("victim_age missing.")
@@ -217,6 +205,7 @@ with tabs[1]:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("victim_gender missing.")
+
 
 # ---------------- TAB 3 ----------------
 with tabs[2]:
@@ -233,88 +222,78 @@ with tabs[2]:
 
     with col2:
         st.subheader("National Yearly Trend")
-        if "_year" in df.columns and df["_year"].notna().any():
+        if df["_year"].notna().any():
             yearly = df[df["_year"].notna()].groupby("_year")["_total_crimes"].sum().reset_index()
-            fig = px.line(yearly, x="_year", y="_total_crimes"], markers=True, height=PLOTLY_HEIGHT)
+            fig = px.line(yearly, x="_year", y="_total_crimes", markers=True, height=PLOTLY_HEIGHT)
             fig.update_traces(line=dict(color="#00e0ff"))
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("No _year data available.")
+            st.info("No year data.")
+
 
 # ---------------- TAB 4 ----------------
 with tabs[3]:
     st.header("Feature Importance & Relationships")
     col1, col2 = st.columns(2)
 
-    # left
     with col1:
-        st.subheader("Feature Importance (Top 12)")
+        st.subheader("Feature Importance")
         if MODEL is not None and hasattr(MODEL, "feature_importances_"):
             try:
                 importances = MODEL.feature_importances_
                 try:
-                    feature_names = list(MODEL.feature_names_in_)
-                except Exception:
-                    feature_names = FEATURES if FEATURES else [f"f_{i}" for i in range(len(importances))]
-                fi = pd.DataFrame({"feature": feature_names, "importance": importances}).sort_values("importance", ascending=False)
-                topfi = fi.head(12)
-                fig = px.bar(topfi, x="importance", y="feature", orientation="h", height=PLOTLY_HEIGHT)
+                    names = list(MODEL.feature_names_in_)
+                except:
+                    names = FEATURES if FEATURES else [f"f_{i}" for i in range(len(importances))]
+                fi = pd.DataFrame({"feature": names, "importance": importances}).sort_values("importance", ascending=False)
+                fig = px.bar(fi.head(12), x="importance", y="feature",
+                             orientation="h", height=PLOTLY_HEIGHT)
                 st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.warning("Model feature importance failed: " + str(e))
+            except:
+                st.warning("Model importance failed.")
         else:
-            st.info("Model not found — using fallback later.")
+            st.info("Model not found.")
 
-    # right
     with col2:
         st.subheader("Boxplots by Crime Domain")
-        domain = domain_col
-        if domain is None:
-            st.info("No crime-domain column.")
+        if domain_col:
+            top_feats = df.select_dtypes(include=[np.number]).columns[:4]
+            for feat in top_feats:
+                fig = px.box(df, x=domain_col, y=feat, height=200)
+                st.plotly_chart(fig, use_container_width=True)
         else:
-            top_feats = [
-                c for c in df.select_dtypes(include=[np.number]).columns
-                if c not in ("_year","data","id")
-            ][:4]
+            st.info("No domain column.")
 
-            if not top_feats:
-                st.info("No numeric features available.")
-            else:
-                for feat in top_feats:
-                    fig = px.box(df, x=domain, y=feat, points="outliers", height=200)
-                    st.plotly_chart(fig, use_container_width=True)
 
 # ---------------- TAB 5 ----------------
 with tabs[4]:
     st.header("Correlation & Pairwise")
     col1, col2 = st.columns(2)
 
+    numeric = df.select_dtypes(include=[np.number]).fillna(0)
+
     with col1:
         st.subheader("Correlation Heatmap")
-        numeric = df.select_dtypes(include=[np.number]).fillna(0)
         if numeric.shape[1] >= 2:
             corr = numeric.corr()
             fig = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", height=480)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Not enough numeric features.")
+            st.info("Not enough numeric columns.")
 
     with col2:
         st.subheader("Top Correlated Pairs")
         if numeric.shape[1] >= 2:
             upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-            pairs = (
-                upper.stack()
-                .reset_index()
-                .rename(columns={0: "corr", "level_0": "var1", "level_1": "var2"})
-            )
+            pairs = upper.stack().reset_index()
+            pairs.columns = ["var1", "var2", "corr"]
             pairs["abs_corr"] = pairs["corr"].abs()
             top_pairs = pairs.sort_values("abs_corr", ascending=False).head(12)
             top_pairs["pair"] = top_pairs["var1"] + " ⟷ " + top_pairs["var2"]
-            fig = px.bar(top_pairs, x="abs_corr", y="pair", orientation="h", height=PLOTLY_HEIGHT)
+            fig = px.bar(top_pairs, x="abs_corr", y="pair", orientation="h", height=320)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Not enough numeric columns.")
+            st.info("Not enough data.")
 
     st.subheader("Scatter Matrix")
     try:
@@ -323,11 +302,11 @@ with tabs[4]:
         sample = numeric[cols].dropna().sample(n=min(400, len(numeric)), random_state=42)
         if len(cols) >= 2:
             fig = px.scatter_matrix(sample, dimensions=cols, height=480)
-            fig.update_traces(diagonal_visible=False)
             st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.info("Scatter matrix failed: " + str(e))
+    except:
+        st.info("Scatter matrix too large or failed.")
+
 
 # ---------------- Footer ----------------
 st.markdown("<hr>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;color:#bde0fe;'>Dashboard aligned with the FYP analysis notebook.</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;color:#bde0fe;'>Dashboard aligned with your FYP notebook.</p>", unsafe_allow_html=True)
