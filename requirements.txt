@@ -4,7 +4,6 @@ geopandas
 shapely
 scikit-learn
 joblib
-pickle5
 plotly
 streamlit
 papermill
