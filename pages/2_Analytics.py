@@ -38,13 +38,12 @@ socioeconomic relationships and multivariate correlations — supporting the FYP
 """, unsafe_allow_html=True)
 
 # ======================================================================
-# ---------------- Load dataset from ZIP (OPTION 2) ---------------------
+# ---------------- Load dataset from ZIP (FINAL FIXED VERSION) ---------
 # ======================================================================
-paths = get_paths()
-DATA_DIR = paths["OUTPUT"]
 
-ZIP_PATH = DATA_DIR / "final_cleaned_crime_socioeconomic_data.zip"
-CSV_NAME = "final_cleaned_crime_socioeconomic_data.csv"   # MUST match filename inside ZIP
+# 🚀 Bypass get_paths() (sebab ia bagi path salah di Streamlit)
+ZIP_PATH = Path("output/final_cleaned_crime_socioeconomic_data.zip")
+CSV_NAME = "final_cleaned_crime_socioeconomic_data.csv"
 
 if not ZIP_PATH.exists():
     st.error(f"ZIP file not found at: {ZIP_PATH}")
@@ -53,7 +52,7 @@ if not ZIP_PATH.exists():
 try:
     with zipfile.ZipFile(ZIP_PATH) as z:
         if CSV_NAME not in z.namelist():
-            st.error(f"CSV file '{CSV_NAME}' not found inside ZIP.")
+            st.error(f"CSV file '{CSV_NAME}' not found inside ZIP. ZIP contains: {z.namelist()}")
             st.stop()
         with z.open(CSV_NAME) as f:
             df = pd.read_csv(f, low_memory=False)
@@ -61,7 +60,7 @@ except Exception as e:
     st.error(f"Failed to read ZIP: {e}")
     st.stop()
 
-# normalize column names
+# NORMALIZE COLUMNS
 df.columns = (
     df.columns.str.strip()
               .str.lower()
@@ -102,7 +101,11 @@ domain_col = next((c for c in domain_candidates if c in df.columns), None)
 if "crime_count" in df.columns:
     df["_total_crimes"] = df["crime_count"].fillna(0).astype(float)
 else:
-    count_candidates = [c for c in df.columns if any(k in c for k in ("report_number","report_id","case","incident","count")) and pd.api.types.is_numeric_dtype(df[c])]
+    count_candidates = [
+        c for c in df.columns
+        if any(k in c for k in ("report_number","report_id","case","incident","count"))
+        and pd.api.types.is_numeric_dtype(df[c])
+    ]
     if count_candidates:
         df["_total_crimes"] = df[count_candidates[0]].fillna(0).astype(float)
     else:
@@ -111,11 +114,11 @@ else:
 # try load model for feature importance
 MODEL = None
 MODEL_PATHS = [
-    DATA_DIR / "extratrees_ultrafast_v4.pkl",
-    DATA_DIR / "model_rf_classifier.joblib",
-    DATA_DIR / "model_rf_classifier.pkl",
-    DATA_DIR / "rf_classifier.joblib",
-    DATA_DIR / "extratrees_v4.pkl"
+    Path("output/extratrees_ultrafast_v4.pkl"),
+    Path("output/model_rf_classifier.joblib"),
+    Path("output/model_rf_classifier.pkl"),
+    Path("output/rf_classifier.joblib"),
+    Path("output/extratrees_v4.pkl")
 ]
 for p in MODEL_PATHS:
     if p.exists():
@@ -132,9 +135,9 @@ for p in MODEL_PATHS:
 
 # features list
 FEATURES = []
-feat_path = DATA_DIR / "features_ultrafast_v4.json"
+feat_path = Path("output/features_ultrafast_v4.json")
 if not feat_path.exists():
-    alt = DATA_DIR / "feature_config.json"
+    alt = Path("output/feature_config.json")
     if alt.exists():
         feat_path = alt
 if feat_path.exists():
@@ -144,7 +147,7 @@ if feat_path.exists():
         FEATURES = []
 
 # create visuals directory
-VIS_DIR = DATA_DIR / "visuals"
+VIS_DIR = Path("output/visuals")
 VIS_DIR.mkdir(exist_ok=True)
 
 # ---------------- Tabs ----------------
@@ -232,7 +235,7 @@ with tabs[2]:
         st.subheader("National Yearly Trend")
         if "_year" in df.columns and df["_year"].notna().any():
             yearly = df[df["_year"].notna()].groupby("_year")["_total_crimes"].sum().reset_index()
-            fig = px.line(yearly, x="_year", y="_total_crimes", markers=True, height=PLOTLY_HEIGHT)
+            fig = px.line(yearly, x="_year", y="_total_crimes"], markers=True, height=PLOTLY_HEIGHT)
             fig.update_traces(line=dict(color="#00e0ff"))
             st.plotly_chart(fig, use_container_width=True)
         else:
@@ -269,7 +272,11 @@ with tabs[3]:
         if domain is None:
             st.info("No crime-domain column.")
         else:
-            top_feats = [c for c in df.select_dtypes(include=[np.number]).columns if c not in ("_year","data","id")][:4]
+            top_feats = [
+                c for c in df.select_dtypes(include=[np.number]).columns
+                if c not in ("_year","data","id")
+            ][:4]
+
             if not top_feats:
                 st.info("No numeric features available.")
             else:
@@ -296,7 +303,11 @@ with tabs[4]:
         st.subheader("Top Correlated Pairs")
         if numeric.shape[1] >= 2:
             upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
-            pairs = (upper.stack().reset_index().rename(columns={0:"corr","level_0":"var1","level_1":"var2"}))
+            pairs = (
+                upper.stack()
+                .reset_index()
+                .rename(columns={0: "corr", "level_0": "var1", "level_1": "var2"})
+            )
             pairs["abs_corr"] = pairs["corr"].abs()
             top_pairs = pairs.sort_values("abs_corr", ascending=False).head(12)
             top_pairs["pair"] = top_pairs["var1"] + " ⟷ " + top_pairs["var2"]
