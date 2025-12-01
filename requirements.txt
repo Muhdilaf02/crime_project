@@ -1,0 +1,12 @@
+pandas
+numpy
+geopandas
+shapely
+scikit-learn
+joblib
+pickle5
+plotly
+streamlit
+papermill
+pyproj
+fiona
