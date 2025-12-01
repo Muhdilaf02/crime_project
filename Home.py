@@ -5,9 +5,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import zipfile
+from pathlib import Path
 
-from utils.common import theme_css, get_paths, status_badge
-from utils.data_pipeline import load_cleaned_data
+from utils.common import theme_css, status_badge
 from utils.guidance import guide_box, steps_box
 from utils.intro_animation import show_intro
 from utils.navbar import cyber_navbar
@@ -24,7 +25,7 @@ cyber_navbar("Home", user_name="Muhammad Ilaf", user_role="Admin")
 add_glow_effect()
 
 # ---------------------------------------------------------------
-# HEADER — CENTERED TITLE (FIXED)
+# HEADER
 # ---------------------------------------------------------------
 st.markdown("""
 <h1 style='text-align:center;font-size:52px;font-weight:900;color:#00e0ff;
@@ -40,7 +41,7 @@ A machine-learning powered platform for crime analysis, district profiling, and 
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# PROJECT SUMMARY (from your proposal)
+# PROJECT SUMMARY
 # ---------------------------------------------------------------
 st.markdown("""
 <div style="
@@ -60,9 +61,9 @@ economic pressure, and social conditions influence crime patterns in India.
 
 <ul style='color:#bde9ff;font-size:15px;'>
 <li>Identifies <b>crime hotspots</b> using district-level aggregation and trend analysis.</li>
-<li>Studies how factors such as <b>education, income, employment, and population</b> relate to crime levels.</li>
-<li>Uses <b>machine learning models</b> to classify districts into Low/Medium/High crime intensity and predict crime counts.</li>
-<li>Provides <b>explainability</b> so users can understand which factors most influence predictions.</li>
+<li>Studies relationships between <b>education, income, employment</b> and crime.</li>
+<li>Uses <b>machine learning</b> to classify districts into Low/Medium/High crime levels.</li>
+<li>Provides <b>explainability</b> for transparent model insights.</li>
 </ul>
 
 <p style='color:#bde9ff;font-size:15px;'>
@@ -75,34 +76,65 @@ who need clear, explainable insights—not just raw statistics.
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------
-# HOW TO USE THIS DASHBOARD
+# HOW TO USE
 # ---------------------------------------------------------------
 steps_box(
     "How to use this dashboard",
     [
-        "1️⃣ Overview — Check KPIs & yearly crime patterns",
-        "2️⃣ Analytics — Explore correlations & socio-economic drivers",
+        "1️⃣ Overview — Check KPIs & yearly patterns",
+        "2️⃣ Analytics — Explore correlations & socioeconomic factors",
         "3️⃣ Map — Visualize district hotspots",
-        "4️⃣ Prediction — Forecast crime using ML",
-        "5️⃣ Intelligence — AI-assisted summaries & insights",
-        "6️⃣ Explainability — Understand model behaviour (SHAP)",
-        "7️⃣ Export — Download clean data for reporting"
+        "4️⃣ Prediction — ML-based forecasting",
+        "5️⃣ Intelligence — AI-assisted summaries & detection",
+        "6️⃣ Explainability — SHAP model insights",
+        "7️⃣ Export — Download processed data"
     ],
     icon="🧭",
     open_default=False
 )
 
 # ---------------------------------------------------------------
+# ZIP DATA LOADER (FINAL FIXED VERSION)
+# ---------------------------------------------------------------
+ZIP_PATH = Path("output/final_cleaned_crime_socioeconomic_data.zip")
+TARGET_CSV = "final_cleaned_crime_socioeconomic_data.csv"
+
+def load_dataset_from_zip():
+    if not ZIP_PATH.exists():
+        return None, f"ZIP file tidak dijumpai di: {ZIP_PATH}"
+
+    try:
+        with zipfile.ZipFile(ZIP_PATH) as z:
+            csv_path = None
+
+            # Cari CSV dalam apa-apa folder dalam ZIP
+            for name in z.namelist():
+                if name.endswith(TARGET_CSV):
+                    csv_path = name
+                    break
+
+            if csv_path is None:
+                return None, f"CSV '{TARGET_CSV}' tiada dalam ZIP. ZIP mengandungi: {z.namelist()}"
+
+            with z.open(csv_path) as f:
+                df = pd.read_csv(f, low_memory=False)
+                return df, None
+
+    except Exception as e:
+        return None, f"Gagal membaca ZIP: {e}"
+
+# ---------------------------------------------------------------
 # LOAD DATA
 # ---------------------------------------------------------------
-try:
-    df = load_cleaned_data()
-    df.columns = df.columns.str.lower()
-    status_badge("Dataset Loaded Successfully", "ok")
-except Exception as e:
+df, error = load_dataset_from_zip()
+
+if error:
     status_badge("❌ Dataset Missing", "err")
-    st.error(f"Unable to load dataset: {e}")
+    st.error(f"Unable to load dataset: {error}")
     st.stop()
+
+df.columns = df.columns.str.lower()
+status_badge("Dataset Loaded Successfully", "ok")
 
 # ---------------------------------------------------------------
 # KPI SNAPSHOT
@@ -126,7 +158,7 @@ c3.metric("Districts", districts)
 c4.metric("Years Covered", years_range)
 
 # ---------------------------------------------------------------
-# MAIN GRAPHS (Trend + Top Districts)
+# MAIN GRAPHS
 # ---------------------------------------------------------------
 st.markdown("<div class='cy-divider'></div>", unsafe_allow_html=True)
 st.markdown("### 📈 National Crime Patterns", unsafe_allow_html=True)
