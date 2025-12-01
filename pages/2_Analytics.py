@@ -1,4 +1,4 @@
-# ======================================================================
+# ====================================================================== 
 # 2_Analytics.py — Final (5 tabs, 2 graphs per tab, compact)
 # ======================================================================
 from __future__ import annotations
@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
 from pathlib import Path
-import json, joblib, warnings
+import json, joblib, warnings, zipfile
 warnings.filterwarnings("ignore")
 
 # UI helpers from your project
@@ -37,19 +37,41 @@ socioeconomic relationships and multivariate correlations — supporting the FYP
 <div style="height:12px"></div>
 """, unsafe_allow_html=True)
 
-# ---------------- Load dataset ----------------
+# ======================================================================
+# ---------------- Load dataset from ZIP (OPTION 2) ---------------------
+# ======================================================================
 paths = get_paths()
 DATA_DIR = paths["OUTPUT"]
-CSV = DATA_DIR / "final_cleaned_crime_socioeconomic_data.csv"
 
-if not CSV.exists():
-    st.error(f"Dataset not found at: {CSV}")
+ZIP_PATH = DATA_DIR / "final_cleaned_crime_socioeconomic_data.zip"
+CSV_NAME = "final_cleaned_crime_socioeconomic_data.csv"   # MUST match filename inside ZIP
+
+if not ZIP_PATH.exists():
+    st.error(f"ZIP file not found at: {ZIP_PATH}")
     st.stop()
 
-# read
-df = pd.read_csv(CSV, low_memory=False)
+try:
+    with zipfile.ZipFile(ZIP_PATH) as z:
+        if CSV_NAME not in z.namelist():
+            st.error(f"CSV file '{CSV_NAME}' not found inside ZIP.")
+            st.stop()
+        with z.open(CSV_NAME) as f:
+            df = pd.read_csv(f, low_memory=False)
+except Exception as e:
+    st.error(f"Failed to read ZIP: {e}")
+    st.stop()
+
 # normalize column names
-df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_").str.replace(r"[^\w\d_]", "", regex=True)
+df.columns = (
+    df.columns.str.strip()
+              .str.lower()
+              .str.replace(" ", "_")
+              .str.replace(r"[^\w\d_]", "", regex=True)
+)
+
+# ======================================================================
+# ---------------- Continue original code below -------------------------
+# ======================================================================
 
 # parse date columns and build _year like notebook
 for dcol in ("date_of_occurrence", "date_reported", "date_case_closed"):
@@ -80,7 +102,6 @@ domain_col = next((c for c in domain_candidates if c in df.columns), None)
 if "crime_count" in df.columns:
     df["_total_crimes"] = df["crime_count"].fillna(0).astype(float)
 else:
-    # attempt count-like columns
     count_candidates = [c for c in df.columns if any(k in c for k in ("report_number","report_id","case","incident","count")) and pd.api.types.is_numeric_dtype(df[c])]
     if count_candidates:
         df["_total_crimes"] = df[count_candidates[0]].fillna(0).astype(float)
@@ -109,7 +130,7 @@ for p in MODEL_PATHS:
         except Exception:
             MODEL = None
 
-# features list if present
+# features list
 FEATURES = []
 feat_path = DATA_DIR / "features_ultrafast_v4.json"
 if not feat_path.exists():
@@ -122,11 +143,11 @@ if feat_path.exists():
     except Exception:
         FEATURES = []
 
-# create visuals dir
+# create visuals directory
 VIS_DIR = DATA_DIR / "visuals"
 VIS_DIR.mkdir(exist_ok=True)
 
-# ---------------- Tabs: 5 tabs, each with 2 columns ----------------
+# ---------------- Tabs ----------------
 tabs = st.tabs([
     "Crime Domain Analysis",
     "Victim Demographics",
@@ -135,15 +156,15 @@ tabs = st.tabs([
     "Correlation & Pairwise"
 ])
 
-# helper for compact plot height
 PLOTLY_HEIGHT = 320
-MATPLOT_FIGSIZE = (6, 3.2)  # width, height in inches
+MATPLOT_FIGSIZE = (6, 3.2)
 
-# ---------------- TAB 1: Crime Domain Analysis ----------------
+# ---------------- TAB 1 ----------------
 with tabs[0]:
     st.header("Crime Domain Analysis")
     col1, col2 = st.columns(2)
-    # left: top bar
+
+    # left
     with col1:
         st.subheader("Top Crime Categories (Bar)")
         if domain_col:
@@ -154,14 +175,13 @@ with tabs[0]:
                          color="count", color_continuous_scale="Reds", height=PLOTLY_HEIGHT)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.warning("No crime-domain column found in dataset.")
+            st.warning("No crime-domain column found.")
 
         st.markdown("""
-        **Explanation:** This horizontal bar chart displays the most frequently recorded crime categories.
-        It helps prioritise intervention and shows which classes the predictive model needs to distinguish best.
+        **Explanation:** Highest-frequency crime classes help identify priority intervention areas.
         """)
 
-    # right: pie for composition
+    # right
     with col2:
         st.subheader("Composition (Pie)")
         if domain_col:
@@ -169,89 +189,61 @@ with tabs[0]:
             fig2 = px.pie(topn, names=domain_col, values="count", height=PLOTLY_HEIGHT)
             st.plotly_chart(fig2, use_container_width=True)
         else:
-            st.info("Pie chart unavailable (no domain column).")
+            st.info("Pie chart unavailable.")
 
-        st.markdown("""
-        **Explanation:** The pie chart complements the bar chart by visualising proportional share
-        of top crime categories, useful for quick stakeholder communication.
-        """)
-
-# ---------------- TAB 2: Victim Demographics ----------------
+# ---------------- TAB 2 ----------------
 with tabs[1]:
     st.header("Victim Demographics")
     col1, col2 = st.columns(2)
 
-    # left: age distribution
     with col1:
-        st.subheader("Age Distribution (Histogram)")
+        st.subheader("Age Distribution")
         if "victim_age" in df.columns:
             fig, ax = plt.subplots(figsize=MATPLOT_FIGSIZE)
             sns.histplot(df["victim_age"].dropna(), bins=30, kde=True, color="orange", ax=ax)
             ax.set_title("Victim Age Distribution")
             st.pyplot(fig)
         else:
-            st.warning("victim_age column not found.")
+            st.warning("victim_age missing.")
 
-        st.markdown("""
-        **Explanation:** The histogram indicates which age groups are most affected by crime.
-        These demographic patterns are important features for predictive modeling.
-        """)
-
-    # right: gender pie
     with col2:
         st.subheader("Gender Breakdown")
         if "victim_gender" in df.columns:
             gender_counts = df["victim_gender"].fillna("Unknown").value_counts()
-            fig = px.pie(values=gender_counts.values, names=gender_counts.index, height=PLOTLY_HEIGHT,
-                         title="Victim Gender")
+            fig = px.pie(values=gender_counts.values, names=gender_counts.index, height=PLOTLY_HEIGHT)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("victim_gender column missing.")
+            st.info("victim_gender missing.")
 
-        st.markdown("""
-        **Explanation:** Gender distribution can reveal vulnerability patterns and influence feature selection.
-        """)
-
-# ---------------- TAB 3: District Crime Activity ----------------
+# ---------------- TAB 3 ----------------
 with tabs[2]:
     st.header("District Crime Activity")
     col1, col2 = st.columns(2)
 
-    # left: top districts bar
     with col1:
-        st.subheader("Top Districts (Bar)")
+        st.subheader("Top Districts")
         topd = df.groupby(region_col)["_total_crimes"].sum().sort_values(ascending=False).head(10).reset_index()
         topd.columns = [region_col, "count"]
-        fig = px.bar(topd, x="count", y=region_col, orientation="h", color="count",
-                     color_continuous_scale="Blues", height=PLOTLY_HEIGHT)
+        fig = px.bar(topd, x="count", y=region_col, orientation="h",
+                     color="count", color_continuous_scale="Blues", height=PLOTLY_HEIGHT)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("""
-        **Explanation:** Identifies hotspots by aggregate counts. Use this to target
-        districts for detailed investigation and resource prioritisation.
-        """)
-
-    # right: national yearly trend (compact)
     with col2:
         st.subheader("National Yearly Trend")
         if "_year" in df.columns and df["_year"].notna().any():
             yearly = df[df["_year"].notna()].groupby("_year")["_total_crimes"].sum().reset_index()
-            fig = px.line(yearly, x="_year", y="_total_crimes", markers=True, height=PLOTLY_HEIGHT,
-                          title="National Yearly Crime Trend")
+            fig = px.line(yearly, x="_year", y="_total_crimes", markers=True, height=PLOTLY_HEIGHT)
             fig.update_traces(line=dict(color="#00e0ff"))
             st.plotly_chart(fig, use_container_width=True)
-            st.markdown("""
-            **Explanation:** Shows trends over time (increase/decrease); useful to validate temporal patterns.
-            """)
         else:
-            st.info("No _year data to plot national trend.")
+            st.info("No _year data available.")
 
-# ---------------- TAB 4: Feature Importance & Relationships ----------------
+# ---------------- TAB 4 ----------------
 with tabs[3]:
     st.header("Feature Importance & Relationships")
     col1, col2 = st.columns(2)
 
-    # left: feature importance (model or fallback variance)
+    # left
     with col1:
         st.subheader("Feature Importance (Top 12)")
         if MODEL is not None and hasattr(MODEL, "feature_importances_"):
@@ -263,108 +255,68 @@ with tabs[3]:
                     feature_names = FEATURES if FEATURES else [f"f_{i}" for i in range(len(importances))]
                 fi = pd.DataFrame({"feature": feature_names, "importance": importances}).sort_values("importance", ascending=False)
                 topfi = fi.head(12)
-                fig = px.bar(topfi, x="importance", y="feature", orientation="h", height=PLOTLY_HEIGHT,
-                             title="Model Feature Importances")
+                fig = px.bar(topfi, x="importance", y="feature", orientation="h", height=PLOTLY_HEIGHT)
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.warning("Failed to render model feature importance: " + str(e))
+                st.warning("Model feature importance failed: " + str(e))
         else:
-            # fallback: show variance of selected socioeconomic features as proxy
-            socio = [c for c in ["no_literate_adult_25_plus","mon_inc_lt_5k","govt_employee_member","sc_st_hh","landless_hh_manual_labor"] if c in df.columns]
-            if socio:
-                var = df[socio].var().sort_values(ascending=False).reset_index()
-                var.columns = ["feature", "importance"]
-                fig = px.bar(var.head(12), x="importance", y="feature", orientation="h", height=PLOTLY_HEIGHT,
-                             title="Feature variability (proxy importance)")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No model or socioeconomic columns available for importance.")
+            st.info("Model not found — using fallback later.")
 
-        st.markdown("""
-        **Explanation:** Ranks features by importance (or variability). Important features inform which
-        socioeconomic indicators to prioritise in predictive modeling.
-        """)
-
-    # right: boxplots of top features vs crime domain
+    # right
     with col2:
-        st.subheader("Boxplots: Top Features vs Crime Domain")
+        st.subheader("Boxplots by Crime Domain")
         domain = domain_col
         if domain is None:
-            st.info("No crime-domain column; boxplots unavailable.")
+            st.info("No crime-domain column.")
         else:
-            # determine top features to plot
-            top_feats = []
-            if MODEL is not None and hasattr(MODEL, "feature_importances_"):
-                try:
-                    feature_names = list(MODEL.feature_names_in_)
-                    top_feats = [f for f in feature_names if f in df.columns][:4]
-                except Exception:
-                    top_feats = [c for c in df.select_dtypes(include=[np.number]).columns if c not in ("_year","data","id")][:4]
-            else:
-                top_feats = [c for c in df.select_dtypes(include=[np.number]).columns if c not in ("_year","data","id")][:4]
-
+            top_feats = [c for c in df.select_dtypes(include=[np.number]).columns if c not in ("_year","data","id")][:4]
             if not top_feats:
-                st.info("No numeric features available for boxplots.")
+                st.info("No numeric features available.")
             else:
-                # create small subplots
                 for feat in top_feats:
-                    fig = px.box(df, x=domain, y=feat, points="outliers", height=200, title=f"{feat} vs {domain}")
+                    fig = px.box(df, x=domain, y=feat, points="outliers", height=200)
                     st.plotly_chart(fig, use_container_width=True)
-                    st.markdown(f"**Explanation:** Compares **{feat}** across crime types to show distribution differences.")
 
-# ---------------- TAB 5: Correlation & Pairwise ----------------
+# ---------------- TAB 5 ----------------
 with tabs[4]:
-    st.header("Correlation & Pairwise Analysis")
+    st.header("Correlation & Pairwise")
     col1, col2 = st.columns(2)
 
-    # left: correlation heatmap
     with col1:
         st.subheader("Correlation Heatmap")
         numeric = df.select_dtypes(include=[np.number]).fillna(0)
-        if numeric.shape[1] < 2:
-            st.info("Not enough numeric columns for correlation.")
-        else:
+        if numeric.shape[1] >= 2:
             corr = numeric.corr()
             fig = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", height=480)
             st.plotly_chart(fig, use_container_width=True)
-            st.markdown("""
-            **Explanation:** Shows linear relationships between numeric variables. Useful for spotting
-            multicollinearity and strong predictive signals.
-            """)
-
-    # right: top correlated pairs as bar chart (compact)
-    with col2:
-        st.subheader("Top Correlated Pairs (Bar)")
-        if numeric.shape[1] < 2:
-            st.info("Not enough numeric columns.")
         else:
+            st.info("Not enough numeric features.")
+
+    with col2:
+        st.subheader("Top Correlated Pairs")
+        if numeric.shape[1] >= 2:
             upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
             pairs = (upper.stack().reset_index().rename(columns={0:"corr","level_0":"var1","level_1":"var2"}))
             pairs["abs_corr"] = pairs["corr"].abs()
             top_pairs = pairs.sort_values("abs_corr", ascending=False).head(12)
-            # convert to bar by combining var1-var2 label
             top_pairs["pair"] = top_pairs["var1"] + " ⟷ " + top_pairs["var2"]
             fig = px.bar(top_pairs, x="abs_corr", y="pair", orientation="h", height=PLOTLY_HEIGHT)
             st.plotly_chart(fig, use_container_width=True)
-            st.markdown("""
-            **Explanation:** Top correlated variable pairs indicate strong linear relationships; inspect these
-            to remove redundancy or to engineer interaction features.
-            """)
+        else:
+            st.info("Not enough numeric columns.")
 
-        # pairplot alternative (scatter matrix) below pair bar (small)
-        st.subheader("Scatter matrix (sample)")
-        try:
-            # choose up to 6 highest variance numeric columns
-            var = numeric.var().sort_values(ascending=False)
-            cols = var.head(6).index.tolist()
-            sample = numeric[cols].dropna().sample(n=min(400, len(numeric)), random_state=42)
-            if len(cols) >= 2:
-                fig = px.scatter_matrix(sample, dimensions=cols, height=480)
-                fig.update_traces(diagonal_visible=False)
-                st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.info("Scatter matrix generation failed or too heavy: " + str(e))
+    st.subheader("Scatter Matrix")
+    try:
+        var = numeric.var().sort_values(ascending=False)
+        cols = var.head(6).index.tolist()
+        sample = numeric[cols].dropna().sample(n=min(400, len(numeric)), random_state=42)
+        if len(cols) >= 2:
+            fig = px.scatter_matrix(sample, dimensions=cols, height=480)
+            fig.update_traces(diagonal_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.info("Scatter matrix failed: " + str(e))
 
 # ---------------- Footer ----------------
 st.markdown("<hr>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center;color:#bde0fe;'>Dashboard aligned with the FYP analysis notebook: exploratory visuals, hotspot detection and socioeconomic relationships to support predictive modelling.</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;color:#bde0fe;'>Dashboard aligned with the FYP analysis notebook.</p>", unsafe_allow_html=True)
