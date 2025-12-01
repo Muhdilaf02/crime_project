@@ -6,7 +6,6 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
 import seaborn as sns
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -38,29 +37,42 @@ socioeconomic relationships and multivariate correlations — supporting the FYP
 <div style="height:12px"></div>
 """, unsafe_allow_html=True)
 
+
+
 # ======================================================================
-# ---------------- Load dataset from ZIP (FINAL FIXED VERSION) ---------
+# ---------------- Load dataset from ZIP (FIXED FOR SUBFOLDER CSV) -----
 # ======================================================================
 
 ZIP_PATH = Path("output/final_cleaned_crime_socioeconomic_data.zip")
-CSV_NAME = "final_cleaned_crime_socioeconomic_data.csv"
+TARGET_CSV = "final_cleaned_crime_socioeconomic_data.csv"
 
 if not ZIP_PATH.exists():
-    st.error(f"ZIP file not found at: {ZIP_PATH}")
+    st.error(f"ZIP file not found: {ZIP_PATH}")
     st.stop()
 
 try:
     with zipfile.ZipFile(ZIP_PATH) as z:
-        if CSV_NAME not in z.namelist():
-            st.error(f"CSV '{CSV_NAME}' not found in ZIP. ZIP contains: {z.namelist()}")
+        csv_path = None
+
+        # Cari CSV dalam mana-mana folder
+        for name in z.namelist():
+            if name.endswith(TARGET_CSV):
+                csv_path = name
+                break
+
+        if csv_path is None:
+            st.error(f"CSV '{TARGET_CSV}' not found in ZIP. ZIP contains: {z.namelist()}")
             st.stop()
-        with z.open(CSV_NAME) as f:
+
+        with z.open(csv_path) as f:
             df = pd.read_csv(f, low_memory=False)
+
 except Exception as e:
-    st.error(f"Failed to load ZIP: {e}")
+    st.error(f"Error reading ZIP: {e}")
     st.stop()
 
-# Normalize columns
+
+# Normalize column names
 df.columns = (
     df.columns.str.strip()
               .str.lower()
@@ -69,11 +81,12 @@ df.columns = (
 )
 
 
+
 # ======================================================================
-# ---------------- Continue original code ------------------------------
+# ---------------- Continue original processing -------------------------
 # ======================================================================
 
-# Parse date columns
+# Date parsing
 for dcol in ("date_of_occurrence", "date_reported", "date_case_closed"):
     if dcol in df.columns:
         df[dcol] = pd.to_datetime(df[dcol], errors="coerce")
@@ -85,31 +98,36 @@ elif "date_of_occurrence" in df.columns:
     df["_year"] = df["date_of_occurrence"].dt.year
 elif "date_reported" in df.columns:
     df["_year"] = df["date_reported"].dt.year
+
 df["_year"] = pd.to_numeric(df["_year"], errors="coerce").astype("Int64")
+
 
 # Region detection
 region_candidates = ["victim_district", "district", "state_name", "state"]
 region_col = next((c for c in region_candidates if c in df.columns), None)
 if region_col is None:
-    st.error("No region column detected.")
+    st.error("No region column found.")
     st.stop()
 
-# Crime domain
+
+# Crime domain detection
 domain_candidates = ["crime_domain", "crime_type", "crime_category", "crime_description", "category"]
 domain_col = next((c for c in domain_candidates if c in df.columns), None)
 
-# Crime count
+
+# Total crimes logic
 if "crime_count" in df.columns:
     df["_total_crimes"] = df["crime_count"].fillna(0).astype(float)
 else:
-    count_candidates = [
+    count_like = [
         c for c in df.columns
-        if any(k in c for k in ("report_number","report_id","case","incident","count"))
+        if any(k in c for k in ("report","case","incident","count"))
         and pd.api.types.is_numeric_dtype(df[c])
     ]
-    df["_total_crimes"] = df[count_candidates[0]].fillna(0).astype(float) if count_candidates else 1.0
+    df["_total_crimes"] = df[count_like[0]].fillna(0).astype(float) if count_like else 1.0
 
-# Load ML model (if exists)
+
+# ML model loading
 MODEL = None
 MODEL_PATHS = [
     Path("output/extratrees_ultrafast_v4.pkl"),
@@ -123,29 +141,28 @@ for p in MODEL_PATHS:
         try:
             if p.suffix in (".pkl", ".pickle"):
                 import pickle
-                with open(p, "rb") as f:
-                    MODEL = pickle.load(f)
+                MODEL = pickle.load(open(p, "rb"))
             else:
                 MODEL = joblib.load(p)
             break
         except:
             MODEL = None
 
-# Feature list
+
+# Features list
 FEATURES = []
 feat_path = Path("output/features_ultrafast_v4.json")
-if not feat_path.exists():
-    alt = Path("output/feature_config.json")
-    if alt.exists(): feat_path = alt
 if feat_path.exists():
-    try: FEATURES = json.load(open(feat_path, "r")).get("features", [])
-    except: FEATURES = []
+    try:
+        FEATURES = json.load(open(feat_path, "r")).get("features", [])
+    except:
+        FEATURES = []
 
-# Visuals directory
-VIS_DIR = Path("output/visuals")
-VIS_DIR.mkdir(exist_ok=True)
 
-# ---------------- Tabs ----------------
+# ======================================================================
+# UI TABS
+# ======================================================================
+
 tabs = st.tabs([
     "Crime Domain Analysis",
     "Victim Demographics",
@@ -157,9 +174,14 @@ tabs = st.tabs([
 PLOTLY_HEIGHT = 320
 MATPLOT_FIGSIZE = (6, 3.2)
 
-# ---------------- TAB 1 ----------------
+
+
+# ======================================================================
+# TAB 1 — DOMAIN ANALYSIS
+# ======================================================================
 with tabs[0]:
     st.header("Crime Domain Analysis")
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -167,15 +189,16 @@ with tabs[0]:
         if domain_col:
             counts = df[domain_col].fillna("Unknown").value_counts().reset_index()
             counts.columns = [domain_col, "count"]
-            top_n = counts.head(10)
-            fig = px.bar(top_n, x="count", y=domain_col, orientation="h",
-                         color="count", color_continuous_scale="Reds", height=PLOTLY_HEIGHT)
+            fig = px.bar(counts.head(10), x="count", y=domain_col,
+                         orientation="h", color="count",
+                         color_continuous_scale="Reds",
+                         height=PLOTLY_HEIGHT)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.warning("Domain column missing.")
+            st.warning("No domain column.")
 
     with col2:
-        st.subheader("Composition (Pie)")
+        st.subheader("Category Composition")
         if domain_col:
             fig = px.pie(counts.head(8), names=domain_col, values="count", height=PLOTLY_HEIGHT)
             st.plotly_chart(fig, use_container_width=True)
@@ -183,33 +206,41 @@ with tabs[0]:
             st.info("Pie chart unavailable.")
 
 
-# ---------------- TAB 2 ----------------
+
+# ======================================================================
+# TAB 2 — VICTIM DEMOGRAPHICS
+# ======================================================================
 with tabs[1]:
     st.header("Victim Demographics")
+
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("Age Distribution")
         if "victim_age" in df.columns:
             fig, ax = plt.subplots(figsize=MATPLOT_FIGSIZE)
-            sns.histplot(df["victim_age"].dropna(), bins=30, kde=True, color="orange", ax=ax)
+            sns.histplot(df["victim_age"].dropna(), bins=30, kde=True, ax=ax, color="orange")
             st.pyplot(fig)
         else:
-            st.warning("victim_age missing.")
+            st.warning("No victim_age column.")
 
     with col2:
         st.subheader("Gender Breakdown")
         if "victim_gender" in df.columns:
-            gender_counts = df["victim_gender"].fillna("Unknown").value_counts()
-            fig = px.pie(values=gender_counts.values, names=gender_counts.index, height=PLOTLY_HEIGHT)
+            gen = df["victim_gender"].fillna("Unknown").value_counts()
+            fig = px.pie(values=gen.values, names=gen.index, height=PLOTLY_HEIGHT)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("victim_gender missing.")
+            st.info("No victim_gender column.")
 
 
-# ---------------- TAB 3 ----------------
+
+# ======================================================================
+# TAB 3 — DISTRICT CRIME ACTIVITY
+# ======================================================================
 with tabs[2]:
     st.header("District Crime Activity")
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -228,12 +259,16 @@ with tabs[2]:
             fig.update_traces(line=dict(color="#00e0ff"))
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("No year data.")
+            st.info("No yearly information available.")
 
 
-# ---------------- TAB 4 ----------------
+
+# ======================================================================
+# TAB 4 — FEATURE IMPORTANCE
+# ======================================================================
 with tabs[3]:
     st.header("Feature Importance & Relationships")
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -244,30 +279,35 @@ with tabs[3]:
                 try:
                     names = list(MODEL.feature_names_in_)
                 except:
-                    names = FEATURES if FEATURES else [f"f_{i}" for i in range(len(importances))]
+                    names = FEATURES if FEATURES else [f"feature_{i}" for i in range(len(importances))]
+
                 fi = pd.DataFrame({"feature": names, "importance": importances}).sort_values("importance", ascending=False)
                 fig = px.bar(fi.head(12), x="importance", y="feature",
                              orientation="h", height=PLOTLY_HEIGHT)
                 st.plotly_chart(fig, use_container_width=True)
             except:
-                st.warning("Model importance failed.")
+                st.warning("Failed to plot ML feature importances.")
         else:
-            st.info("Model not found.")
+            st.info("Model not available.")
 
     with col2:
-        st.subheader("Boxplots by Crime Domain")
+        st.subheader("Feature vs Crime Domain")
         if domain_col:
-            top_feats = df.select_dtypes(include=[np.number]).columns[:4]
-            for feat in top_feats:
+            numeric_cols = df.select_dtypes(include=[np.number]).columns[:4]
+            for feat in numeric_cols:
                 fig = px.box(df, x=domain_col, y=feat, height=200)
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No domain column.")
 
 
-# ---------------- TAB 5 ----------------
+
+# ======================================================================
+# TAB 5 — CORRELATION
+# ======================================================================
 with tabs[4]:
-    st.header("Correlation & Pairwise")
+    st.header("Correlation & Pairwise Analysis")
+
     col1, col2 = st.columns(2)
 
     numeric = df.select_dtypes(include=[np.number]).fillna(0)
@@ -276,10 +316,10 @@ with tabs[4]:
         st.subheader("Correlation Heatmap")
         if numeric.shape[1] >= 2:
             corr = numeric.corr()
-            fig = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", height=480)
+            fig = px.imshow(corr, text_auto=True, color_continuous_scale="RdBu_r", height=450)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Not enough numeric columns.")
+            st.info("Not enough numeric fields.")
 
     with col2:
         st.subheader("Top Correlated Pairs")
@@ -288,23 +328,27 @@ with tabs[4]:
             pairs = upper.stack().reset_index()
             pairs.columns = ["var1", "var2", "corr"]
             pairs["abs_corr"] = pairs["corr"].abs()
+
             top_pairs = pairs.sort_values("abs_corr", ascending=False).head(12)
             top_pairs["pair"] = top_pairs["var1"] + " ⟷ " + top_pairs["var2"]
-            fig = px.bar(top_pairs, x="abs_corr", y="pair", orientation="h", height=320)
+
+            fig = px.bar(top_pairs, x="abs_corr", y="pair", orientation="h", height=350)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Not enough data.")
+            st.info("Not enough data for correlation pairs.")
 
     st.subheader("Scatter Matrix")
     try:
         var = numeric.var().sort_values(ascending=False)
         cols = var.head(6).index.tolist()
         sample = numeric[cols].dropna().sample(n=min(400, len(numeric)), random_state=42)
+
         if len(cols) >= 2:
-            fig = px.scatter_matrix(sample, dimensions=cols, height=480)
+            fig = px.scatter_matrix(sample, dimensions=cols, height=450)
             st.plotly_chart(fig, use_container_width=True)
     except:
-        st.info("Scatter matrix too large or failed.")
+        st.info("Scatter matrix failed.")
+
 
 
 # ---------------- Footer ----------------
